@@ -1,0 +1,46 @@
+# Dependências
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+dist/
+dist-ssr/
+*.local
+
+# Tauri build
+src-tauri/target/
+src-tauri/WixTools/
+
+# Installer output
+installer/Output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testes
+coverage/
+
+# Dados locais de desenvolvimento
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+storage/
