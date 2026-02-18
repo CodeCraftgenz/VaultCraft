@@ -23,32 +23,42 @@ def remove_background(src_path):
     """Remove gray/white background from corners via flood fill."""
     img = Image.open(src_path).convert("RGBA")
 
-    # Flood fill from each corner with a marker color
+    # Flood fill from each corner — thresh=90 captures the full gray background
+    # (thresh=60 only got 0.3%, thresh=90 gets ~19% which matches the corner area)
     temp = img.copy()
     marker = (255, 0, 255, 255)
     corners = [(0, 0), (img.width - 1, 0), (0, img.height - 1), (img.width - 1, img.height - 1)]
     for corner in corners:
-        ImageDraw.floodfill(temp, corner, marker, thresh=60)
+        ImageDraw.floodfill(temp, corner, marker, thresh=90)
 
-    # Fast numpy masking: where flood fill reached, make transparent
+    # Fast numpy masking: where flood fill reached, make fully transparent
     temp_arr = np.array(temp)
     img_arr = np.array(img)
     is_bg = (temp_arr[:, :, 0] == 255) & (temp_arr[:, :, 1] == 0) & (temp_arr[:, :, 2] == 255)
-    img_arr[is_bg, 3] = 0
+    img_arr[is_bg] = [0, 0, 0, 0]
 
-    # Erode alpha by 1px to remove gray fringe at edges
-    alpha = Image.fromarray(img_arr[:, :, 3])
-    alpha = alpha.filter(ImageFilter.MinFilter(3))
-    # Smooth the hard edge
-    alpha = alpha.filter(ImageFilter.GaussianBlur(radius=0.5))
-    img_arr[:, :, 3] = np.array(alpha)
+    # Handle anti-aliased edge pixels using saturation detection
+    # Background = gray (saturation ~0), icon = colorful (high saturation)
+    bg_mask = Image.fromarray((is_bg * 255).astype(np.uint8))
+    dilated = bg_mask.filter(ImageFilter.MaxFilter(7))
+    dilated_arr = np.array(dilated) > 128
+    edge_zone = dilated_arr & ~is_bg
 
-    # Ensure background stays fully transparent
-    img_arr[is_bg, 3] = 0
+    r = img_arr[:, :, 0].astype(float)
+    g = img_arr[:, :, 1].astype(float)
+    b = img_arr[:, :, 2].astype(float)
+    max_rgb = np.maximum(r, np.maximum(g, b))
+    min_rgb = np.minimum(r, np.minimum(g, b))
+    saturation = (max_rgb - min_rgb) / (max_rgb + 1e-10)
 
-    result = Image.fromarray(img_arr)
-    print(f"  Background removed (transparent corners)")
-    return result
+    # Edge pixels: alpha proportional to color saturation (gray fringe -> transparent)
+    edge_alpha = np.clip(saturation * 4.0, 0.0, 1.0)
+    img_arr[edge_zone, 3] = (edge_alpha[edge_zone] * 255).astype(np.uint8)
+
+    removed = is_bg.sum()
+    total = img.width * img.height
+    print(f"  Background removed: {removed} pixels ({removed/total*100:.1f}%)")
+    return Image.fromarray(img_arr)
 
 
 def create_hd_master(src_path):
@@ -116,8 +126,15 @@ def create_hd_master(src_path):
 
 
 def downscale(master, size):
-    """Downscale master (4096x4096) to target size with HD quality."""
-    return master.resize((size, size), Image.LANCZOS)
+    """Downscale master to target size with clean alpha edges."""
+    img = master.resize((size, size), Image.LANCZOS)
+    # Clean semi-transparent fringe from LANCZOS interpolation
+    # Without this, small icons get gray halos from blended alpha
+    arr = np.array(img)
+    # Threshold scales with size: smaller icons need more aggressive cleanup
+    threshold = 128 if size <= 64 else 80
+    arr[arr[:, :, 3] < threshold] = [0, 0, 0, 0]
+    return Image.fromarray(arr)
 
 
 def create_ico(master, output_path):
