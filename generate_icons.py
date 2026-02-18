@@ -4,6 +4,7 @@ Uses 4x supersampling for crisp text at all sizes.
 Renders the V at 4096x4096 then downscales for maximum quality.
 """
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import numpy as np
 import struct
 import io
 import os
@@ -18,12 +19,44 @@ SS = 4
 MASTER_SIZE = 1024
 
 
+def remove_background(src_path):
+    """Remove gray/white background from corners via flood fill."""
+    img = Image.open(src_path).convert("RGBA")
+
+    # Flood fill from each corner with a marker color
+    temp = img.copy()
+    marker = (255, 0, 255, 255)
+    corners = [(0, 0), (img.width - 1, 0), (0, img.height - 1), (img.width - 1, img.height - 1)]
+    for corner in corners:
+        ImageDraw.floodfill(temp, corner, marker, thresh=60)
+
+    # Fast numpy masking: where flood fill reached, make transparent
+    temp_arr = np.array(temp)
+    img_arr = np.array(img)
+    is_bg = (temp_arr[:, :, 0] == 255) & (temp_arr[:, :, 1] == 0) & (temp_arr[:, :, 2] == 255)
+    img_arr[is_bg, 3] = 0
+
+    # Erode alpha by 1px to remove gray fringe at edges
+    alpha = Image.fromarray(img_arr[:, :, 3])
+    alpha = alpha.filter(ImageFilter.MinFilter(3))
+    # Smooth the hard edge
+    alpha = alpha.filter(ImageFilter.GaussianBlur(radius=0.5))
+    img_arr[:, :, 3] = np.array(alpha)
+
+    # Ensure background stays fully transparent
+    img_arr[is_bg, 3] = 0
+
+    result = Image.fromarray(img_arr)
+    print(f"  Background removed (transparent corners)")
+    return result
+
+
 def create_hd_master(src_path):
     """Create a high-quality master icon at 4096x4096 with 'V' letter."""
     render_size = MASTER_SIZE * SS  # 4096
 
-    # Load source and upscale to render resolution
-    src = Image.open(src_path).convert("RGBA")
+    # Load source, remove background, upscale to render resolution
+    src = remove_background(src_path)
     master = src.resize((render_size, render_size), Image.LANCZOS)
 
     # Choose the best bold font available
